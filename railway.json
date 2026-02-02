@@ -1,7 +1,11 @@
 {
   "$schema": "https://railway.com/railway.json",
   "build": {
-    "builder": "NIXPACKS"
+    "builder": "NIXPACKS",
+    "python": {
+      "version": "3.11",
+      "lockfileVersion": 2
+    }
   },
   "deploy": {
     "startCommand": "python3 polymarket_telegram_bot.py",
