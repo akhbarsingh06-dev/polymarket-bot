@@ -1,16 +1,12 @@
 {
   "$schema": "https://railway.com/railway.json",
   "build": {
-    "builder": "NIXPACKS",
-    "python": {
-      "version": "3.11",
-      "lockfileVersion": 2
-    }
+    "builder": "NIXPACKS"
   },
   "deploy": {
-    "startCommand": "python3 polymarket_telegram_bot.py",
+    "startCommand": "./start.sh",
     "healthcheckPath": "/",
-    "healthcheckTimeout": 30,
+    "healthcheckTimeout": 60,
     "restartPolicy": "ON_FAILURE",
     "restartPolicyMaxRetries": 3
   }
