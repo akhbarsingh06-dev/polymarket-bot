@@ -1,23 +1,17 @@
 #!/usr/bin/env python3
 """
-🤖 Polymarket Telegram Auto-Poster - FINAL CLEAN VERSION
+🤖 Polymarket Telegram Auto-Poster - FIXED FINAL VERSION
 ======================================================
-NO prefixes, NO duplicates, CLEAR format, HYPERLINKS
-
-Format:
-🚨 JUST IN: 77% chance: Ethereum ABOVE $2K on 2026-02-01
-📊 $346 | 📁 Eth | market
-
-🔥 BREAKING: 83% chance: West Ham WIN on 2026-02-01  
-📊 $889 | 📁 EPL | market
+CLEAN • NO DUPLICATES • NO CRASHES • HEALTH CHECK ENABLED
 """
 
 import os
-import sys
 import time
 import requests
+import threading
 from datetime import datetime, timedelta
 from collections import defaultdict
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # ==================== CONFIG ====================
 CONFIG_FILE = "bot_data/telegram_config.env"
@@ -25,189 +19,181 @@ CONFIG_FILE = "bot_data/telegram_config.env"
 def load_config():
     config = {}
     if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, 'r') as f:
+        with open(CONFIG_FILE) as f:
             for line in f:
-                line = line.strip()
-                if line and not line.startswith('#') and '=' in line:
-                    key, value = line.split('=', 1)
-                    config[key.strip()] = value.strip()
+                if '=' in line and not line.startswith('#'):
+                    k, v = line.strip().split('=', 1)
+                    config[k.strip()] = v.strip()
     return config
 
 CONFIG = load_config()
-TELEGRAM_TOKEN = CONFIG.get('TELEGRAM_BOT_TOKEN', '')
-TELEGRAM_CHANNEL_ID = CONFIG.get('TELEGRAM_CHANNEL_ID', '@polymarketpredictionsAlert')
-DATA_API = CONFIG.get('DATA_API', 'https://data-api.polymarket.com')
-POST_INTERVAL = 5
+TELEGRAM_TOKEN = CONFIG.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHANNEL_ID = CONFIG.get("TELEGRAM_CHANNEL_ID", "@polymarketpredictionsAlert")
+DATA_API = "https://data-api.polymarket.com"
+POST_INTERVAL_MIN = 5
 MAX_POSTS_PER_DAY = 30
 
-# ==================== FORMAT FUNCTION (CLEAN!) ====================
+# ==================== FORMAT ====================
 def format_post(market, tier):
-    """Generate CLEAN post - NO PREFIX, PROBABILITY FIRST"""
-    prob = market['top_prob']
-    volume = float(market['volumeNum'])
-    category = market['category']
-    q = market['question']
-    outcome = market['top_outcome']
-    slug = market.get('slug', '')
-    
-    # Clean question
-    q_clean = q.replace('?', '').strip()
-    
-    # Extract date
+    prob = market["top_prob"]
+    volume = float(market["volumeNum"])
+    category = market["category"]
+    question = market["question"].replace("?", "").strip()
+    slug = market.get("slug", "")
+
+    # Date extraction
     date_str = ""
-    if ' on ' in q_clean.lower():
-        date_part = q_clean.lower().split(' on ')[-1].split()[0]
+    if " on " in question.lower():
+        date_part = question.lower().split(" on ")[-1]
         date_str = f" on {date_part}"
-    
-    # Extract subject
-    if 'will ' in q_clean.lower():
-        subject = q_clean.lower().split('will ')[-1].replace(date_str, '').strip('?')
-    else:
-        subject = q_clean[:40]
-    
-    # Determine condition (ABOVE/UNDER/WIN/LOSE)
-    q_lower = q.lower()
-    if 'above' in q_lower:
+
+    subject = question.split(" on ")[0]
+    subject = subject.replace("will ", "").replace("the ", "").strip()
+
+    ql = question.lower()
+    if "above" in ql:
         condition = "ABOVE"
-        target = q_lower.split('above')[-1].strip().split()[0]
-        subject = f"{subject} {target}"
-    elif 'below' in q_lower:
+    elif "below" in ql:
         condition = "UNDER"
-        target = q_lower.split('below')[-1].strip().split()[0]
-        subject = f"{subject} {target}"
-    elif 'win' in q_lower or outcome.lower() in ['yes', 'team a', team_a.lower()] if ' vs ' in q else False:
+    elif "win" in ql:
         condition = "WIN"
-    elif 'lose' in q_lower or outcome.lower() in ['no', 'team b', team_b.lower()] if ' vs ' in q else False:
-        condition = "LOSE"
-    elif outcome.lower() in ['up', 'yes', 'rise']:
-        condition = "ABOVE"
-    elif outcome.lower() in ['down', 'no', 'fall']:
-        condition = "UNDER"
     else:
-        condition = outcome.upper()
-    
-    # Clean subject
-    subject = subject.replace('will ', '').replace('the ', '').strip('?').strip()
-    
-    # Volume format
-    if volume >= 1000000:
-        vol_str = f"${volume/1000000:.1f}M"
-    elif volume >= 1000:
-        vol_str = f"${volume/1000:.1f}K"
+        condition = ""
+
+    subject = f"{subject} {condition}".strip()
+
+    # Volume formatting
+    if volume >= 1_000_000:
+        vol = f"${volume/1_000_000:.1f}M"
+    elif volume >= 1_000:
+        vol = f"${volume/1_000:.1f}K"
     else:
-        vol_str = f"${volume:.0f}"
-    
+        vol = f"${int(volume)}"
+
     # Link
     link = f'<a href="https://polymarket.com/market/{slug}">market</a>' if slug else "market"
-    
-    # Generate based on tier
-    if tier == "JUST IN":
-        return f"""🚨 JUST IN: {prob:.0f}% chance: {subject}{date_str}
 
-📊 {vol_str} | 📁 {category} | {link}
+    # Emoji and tag
+    emoji = "🚨" if tier == "JUST IN" else "🔥"
+    tag = "#Polymarket #Alert"
 
-#Polymarket #Trading"""
-    
-    elif tier == "BREAKING":
-        return f"""🔥 BREAKING: {prob:.0f}% chance: {subject}{date_str}
+    return (
+        f"{emoji} {tier}: {prob:.0f}% chance: {subject}{date_str} "
+        f"📊 {vol} | 📁 {category} | {link} {tag}"
+    )
 
-📊 {vol_str} | 📁 {category} | {link}
-
-#Polymarket #Breaking"""
-    
-    else:  # WATCH
-        return f"""⚠️ WATCH: {prob:.0f}% chance: {subject}{date_str}
-
-📊 {vol_str} | 📁 {category} | {link}
-
-#Polymarket #Alert"""
-
-# ==================== DATA FETCH ====================
-def get_fresh_markets():
-    try:
-        r = requests.get(f"{DATA_API}/trades", params={"limit": 200}, timeout=15)
-        if r.status_code != 200:
-            return []
-        trades = r.json()
-        if not trades:
-            return []
-        
-        markets = {}
-        now = datetime.now()
-        
-        for t in trades:
-            title = t.get('title', 'Unknown')
-            slug = t.get('slug', '')
-            event_slug = t.get('eventSlug', '')
-            outcome = t.get('outcome', 'Unknown')
-            size = float(t.get('size', 0))
-            timestamp = t.get('timestamp', 0)
-            
-            if title not in markets:
-                markets[title] = {
-                    'question': title, 'slug': slug, 'eventSlug': event_slug,
-                    'category': event_slug.split('-')[0].title() if event_slug else 'General',
-                    'trades': 0, 'outcomes': defaultdict(float), 'total_size': 0,
-                    'last_trade': 0
-                }
-            
-            m = markets[title]
-            m['trades'] += 1
-            m['outcomes'][outcome] += 1
-            m['total_size'] += size
-            if timestamp > m['last_trade']:
-                m['last_trade'] = timestamp
-        
-        fresh = []
-        recent_cutoff = now - timedelta(hours=24)
-        
-        for title, data in markets.items():
-            last_trade = datetime.fromtimestamp(data['last_trade'])
-            if last_trade >= recent_cutoff:
-                total = sum(data['outcomes'].values())
-                if total > 0:
-                    sorted_outcomes = sorted(data['outcomes'].items(), key=lambda x: x[1], reverse=True)
-                    top_outcome = sorted_outcomes[0][0]
-                    top_count = sorted_outcomes[0][1]
-                    prob = (top_count / total) * 100
-                    
-                    fresh.append({
-                        'question': data['question'],
-                        'slug': data['slug'],
-                        'category': data['category'],
-                        'volumeNum': str(data['total_size']),
-                        'trades_count': data['trades'],
-                        'outcomes': dict(data['outcomes']),
-                        'top_outcome': top_outcome,
-                        'top_prob': prob,
-                        'last_trade': data['last_trade']
-                    })
-        
-        fresh.sort(key=lambda x: x['trades_count'], reverse=True)
-        return fresh
-    except Exception as e:
-        print(f"❌ Error: {e}")
-        return []
-
-# ==================== TELEGRAM ====================
+# ==================== SEND ====================
 def send_telegram(text):
     if not TELEGRAM_TOKEN:
+        print(f"   ❌ ERROR: TELEGRAM_TOKEN not set!")
         return False
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     try:
         r = requests.post(url, json={"chat_id": TELEGRAM_CHANNEL_ID, "text": text, "parse_mode": "HTML"}, timeout=15)
-        return r.json().get('ok', False)
-    except:
+        if r.json().get('ok', False):
+            print(f"   ✅ Telegram post successful!")
+            return True
+        else:
+            print(f"   ❌ Telegram API error: {r.json().get('description', 'Unknown error')}")
+            return False
+    except Exception as e:
+        print(f"   ❌ Telegram send failed: {str(e)}")
         return False
+
+# ==================== DATA ====================
+def get_fresh_markets():
+    try:
+        r = requests.get(f"{DATA_API}/trades", params={"limit": 200}, timeout=15)
+        trades = r.json()
+    except Exception:
+        return []
+
+    markets = {}
+    now = datetime.now()
+    cutoff = now - timedelta(hours=24)
+
+    for t in trades:
+        title = t.get("title", "Unknown")
+        slug = t.get("slug", "")
+        outcome = t.get("outcome", "")
+        size = float(t.get("size", 0))
+        ts = t.get("timestamp", 0)
+
+        if title not in markets:
+            markets[title] = {
+                "question": title,
+                "slug": slug,
+                "category": "General",
+                "outcomes": defaultdict(int),
+                "total": 0,
+                "last": ts,
+            }
+
+        m = markets[title]
+        m["outcomes"][outcome] += 1
+        m["total"] += size
+        m["last"] = max(m["last"], ts)
+
+    fresh = []
+    for m in markets.values():
+        if datetime.fromtimestamp(m["last"]) < cutoff:
+            continue
+
+        total = sum(m["outcomes"].values())
+        if total == 0:
+            continue
+
+        top_outcome, top_count = max(m["outcomes"].items(), key=lambda x: x[1])
+        prob = (top_count / total) * 100
+
+        fresh.append({
+            "question": m["question"],
+            "slug": m["slug"],
+            "category": m["category"],
+            "volumeNum": str(m["total"]),
+            "top_prob": prob,
+            "last_trade": m["last"],
+        })
+
+    fresh.sort(key=lambda x: x["top_prob"], reverse=True)
+    return fresh
+
+# ==================== HEALTH CHECK ====================
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/health' or self.path == '/':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'OK')
+        else:
+            self.send_response(404)
+            self.end_headers()
+    
+    def log_message(self, format, *args):
+        pass
+
+def start_health_server(port=None):
+    port = int(os.environ.get('PORT', port or 8080))
+    server = HTTPServer(('0.0.0.0', port), HealthHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    print(f"✅ Health check server running on port {port}")
+    return server
 
 # ==================== MAIN ====================
 def run_monitor():
     print("\n" + "="*60)
-    print("🚀 POLYMARKET TELEGRAM BOT (FINAL CLEAN)")
+    print("🚀 POLYMARKET TELEGRAM BOT (FIXED)")
     print("="*60)
     print(f"📺 Channel: {TELEGRAM_CHANNEL_ID}")
-    print("📝 NO PREFIX | CLEAN FORMAT | HYPERLINKS")
     print("="*60 + "\n")
+    
+    # Start health check server
+    try:
+        start_health_server()
+    except Exception as e:
+        print(f"⚠️ Health server failed: {e}")
     
     posted = set()
     posts_today = 0
@@ -221,7 +207,7 @@ def run_monitor():
                 day_start = datetime.now().date()
             
             if posts_today >= MAX_POSTS_PER_DAY:
-                time.sleep(POST_INTERVAL * 60)
+                time.sleep(POST_INTERVAL_MIN * 60)
                 continue
             
             print(f"\n🔍 [{datetime.now().strftime('%H:%M')}] Checking...")
@@ -229,13 +215,22 @@ def run_monitor():
             
             if not markets:
                 print("   No activity")
-                time.sleep(POST_INTERVAL * 60)
+                time.sleep(POST_INTERVAL_MIN * 60)
                 continue
             
-            print("   " + str(len(markets)) + " markets found")
+            print(f"   {len(markets)} markets found")
             
-            just_in = [m for m in markets if m['top_prob'] >= 90]
-            breaking = [m for m in markets if 60 <= m['top_prob'] < 90]
+            # Probability breakdown
+            high_prob = [m for m in markets if m['top_prob'] >= 90]
+            med_prob = [m for m in markets if 60 <= m['top_prob'] < 90]
+            low_prob = [m for m in markets if 50 <= m['top_prob'] < 60]
+            print(f"   📊 90%+: {len(high_prob)}, 60-90%: {len(med_prob)}, 50-60%: {len(low_prob)}")
+            
+            just_in = high_prob
+            breaking = med_prob
+            
+            if not just_in and not breaking:
+                print(f"   ⚠️ No markets meet posting criteria")
             
             for m in just_in[:1]:
                 key = m['question'][:30]
@@ -256,7 +251,7 @@ def run_monitor():
                         print(f"   ✅ BREAKING: {m['question'][:40]}...")
             
             print(f"   📊 Today: {posts_today}/{MAX_POSTS_PER_DAY}")
-            time.sleep(POST_INTERVAL * 60)
+            time.sleep(POST_INTERVAL_MIN * 60)
             
         except KeyboardInterrupt:
             print("\n👋 Stopped")
