@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
 """
-🤖 Polymarket Telegram Auto-Poster - FIXED FINAL VERSION
-======================================================
-CLEAN • NO DUPLICATES • NO CRASHES • HEALTH CHECK ENABLED
+🤖 Polymarket Telegram Auto-Poster - CLEAN VERSION
 """
 
 import os
 import time
 import requests
 import threading
-from datetime import datetime, timedelta
-from collections import defaultdict
+from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # ==================== CONFIG ====================
@@ -37,30 +34,8 @@ MAX_POSTS_PER_DAY = 30
 def format_post(market, tier):
     prob = market["top_prob"]
     volume = float(market["volumeNum"])
-    category = market["category"]
     question = market["question"].replace("?", "").strip()
     slug = market.get("slug", "")
-
-    # Date extraction
-    date_str = ""
-    if " on " in question.lower():
-        date_part = question.lower().split(" on ")[-1]
-        date_str = f" on {date_part}"
-
-    subject = question.split(" on ")[0]
-    subject = subject.replace("will ", "").replace("the ", "").strip()
-
-    ql = question.lower()
-    if "above" in ql:
-        condition = "ABOVE"
-    elif "below" in ql:
-        condition = "UNDER"
-    elif "win" in ql:
-        condition = "WIN"
-    else:
-        condition = ""
-
-    subject = f"{subject} {condition}".strip()
 
     # Volume formatting
     if volume >= 1_000_000:
@@ -73,32 +48,10 @@ def format_post(market, tier):
     # Link
     link = f'<a href="https://polymarket.com/market/{slug}">market</a>' if slug else "market"
 
-    # Emoji and tag
+    # Emoji
     emoji = "🚨" if tier == "JUST IN" else "🔥"
-    tag = "#Polymarket #Alert"
 
-    return (
-        f"{emoji} {tier}: {prob:.0f}% chance: {subject}{date_str} "
-        f"📊 {vol} | 📁 {category} | {link} {tag}"
-    )
-
-# ==================== SEND ====================
-def send_telegram(text):
-    if not TELEGRAM_TOKEN:
-        print(f"   ❌ ERROR: TELEGRAM_TOKEN not set!")
-        return False
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    try:
-        r = requests.post(url, json={"chat_id": TELEGRAM_CHANNEL_ID, "text": text, "parse_mode": "HTML"}, timeout=15)
-        if r.json().get('ok', False):
-            print(f"   ✅ Telegram post successful!")
-            return True
-        else:
-            print(f"   ❌ Telegram API error: {r.json().get('description', 'Unknown error')}")
-            return False
-    except Exception as e:
-        print(f"   ❌ Telegram send failed: {str(e)}")
-        return False
+    return f"{emoji} {tier}: {prob:.0f}% chance: {question} 📊 {vol} | {link} #Polymarket"
 
 # ==================== DATA ====================
 def get_fresh_markets():
@@ -108,9 +61,10 @@ def get_fresh_markets():
     except Exception:
         return []
 
+    from collections import defaultdict
     markets = {}
     now = datetime.now()
-    cutoff = now - timedelta(hours=24)
+    cutoff = now.replace(hour=now.hour - 24)
 
     for t in trades:
         title = t.get("title", "Unknown")
@@ -120,14 +74,7 @@ def get_fresh_markets():
         ts = t.get("timestamp", 0)
 
         if title not in markets:
-            markets[title] = {
-                "question": title,
-                "slug": slug,
-                "category": "General",
-                "outcomes": defaultdict(int),
-                "total": 0,
-                "last": ts,
-            }
+            markets[title] = {"question": title, "slug": slug, "outcomes": defaultdict(int), "total": 0, "last": ts}
 
         m = markets[title]
         m["outcomes"][outcome] += 1
@@ -138,127 +85,75 @@ def get_fresh_markets():
     for m in markets.values():
         if datetime.fromtimestamp(m["last"]) < cutoff:
             continue
-
         total = sum(m["outcomes"].values())
         if total == 0:
             continue
-
         top_outcome, top_count = max(m["outcomes"].items(), key=lambda x: x[1])
         prob = (top_count / total) * 100
-
-        fresh.append({
-            "question": m["question"],
-            "slug": m["slug"],
-            "category": m["category"],
-            "volumeNum": str(m["total"]),
-            "top_prob": prob,
-            "last_trade": m["last"],
-        })
+        fresh.append({"question": m["question"], "slug": m["slug"], "volumeNum": str(m["total"]), "top_prob": prob, "last_trade": m["last"]})
 
     fresh.sort(key=lambda x: x["top_prob"], reverse=True)
     return fresh
 
-# ==================== HEALTH CHECK ====================
+# ==================== TELEGRAM ====================
+def send_telegram(text):
+    if not TELEGRAM_TOKEN:
+        return False
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHANNEL_ID, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True}
+    r = requests.post(url, json=payload, timeout=15)
+    return r.ok
+
+# ==================== HEALTH ====================
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path == '/health' or self.path == '/':
-            self.send_response(200)
-            self.send_header('Content-type', 'text/plain')
-            self.end_headers()
-            self.wfile.write(b'OK')
-        else:
-            self.send_response(404)
-            self.end_headers()
-    
-    def log_message(self, format, *args):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+    def log_message(self, *_):
         pass
 
-def start_health_server(port=None):
-    port = int(os.environ.get('PORT', port or 8080))
-    server = HTTPServer(('0.0.0.0', port), HealthHandler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    print(f"✅ Health check server running on port {port}")
-    return server
+def start_health():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), HealthHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    print(f"✅ Health server on {port}")
 
 # ==================== MAIN ====================
 def run_monitor():
-    print("\n" + "="*60)
-    print("🚀 POLYMARKET TELEGRAM BOT (FIXED)")
-    print("="*60)
-    print(f"📺 Channel: {TELEGRAM_CHANNEL_ID}")
-    print("="*60 + "\n")
-    
-    # Start health check server
-    try:
-        start_health_server()
-    except Exception as e:
-        print(f"⚠️ Health server failed: {e}")
-    
+    print("🚀 POLYMARKET BOT STARTED")
+    start_health()
     posted = set()
-    posts_today = 0
-    day_start = datetime.now().date()
-    
-    while True:
-        try:
-            if datetime.now().date() != day_start:
-                posted.clear()
-                posts_today = 0
-                day_start = datetime.now().date()
-            
-            if posts_today >= MAX_POSTS_PER_DAY:
-                time.sleep(POST_INTERVAL_MIN * 60)
-                continue
-            
-            print(f"\n🔍 [{datetime.now().strftime('%H:%M')}] Checking...")
-            markets = get_fresh_markets()
-            
-            if not markets:
-                print("   No activity")
-                time.sleep(POST_INTERVAL_MIN * 60)
-                continue
-            
-            print(f"   {len(markets)} markets found")
-            
-            # Probability breakdown
-            high_prob = [m for m in markets if m['top_prob'] >= 90]
-            med_prob = [m for m in markets if 60 <= m['top_prob'] < 90]
-            low_prob = [m for m in markets if 50 <= m['top_prob'] < 60]
-            print(f"   📊 90%+: {len(high_prob)}, 60-90%: {len(med_prob)}, 50-60%: {len(low_prob)}")
-            
-            just_in = high_prob
-            breaking = med_prob
-            
-            if not just_in and not breaking:
-                print(f"   ⚠️ No markets meet posting criteria")
-            
-            for m in just_in[:1]:
-                key = m['question'][:30]
-                if key not in posted:
-                    post = format_post(m, "JUST IN")
-                    if send_telegram(post):
-                        posted.add(key)
-                        posts_today += 1
-                        print(f"   ✅ JUST IN: {m['question'][:40]}...")
-            
-            for m in breaking[:1]:
-                key = m['question'][:30]
-                if key not in posted:
-                    post = format_post(m, "BREAKING")
-                    if send_telegram(post):
-                        posted.add(key)
-                        posts_today += 1
-                        print(f"   ✅ BREAKING: {m['question'][:40]}...")
-            
-            print(f"   📊 Today: {posts_today}/{MAX_POSTS_PER_DAY}")
-            time.sleep(POST_INTERVAL_MIN * 60)
-            
-        except KeyboardInterrupt:
-            print("\n👋 Stopped")
-            break
-        except Exception as e:
-            print(f"❌ Error: {e}")
-            time.sleep(60)
+    today = datetime.now().date()
+    count = 0
 
+    while True:
+        if datetime.now().date() != today:
+            posted.clear()
+            count = 0
+            today = datetime.now().date()
+
+        if count >= MAX_POSTS_PER_DAY:
+            time.sleep(POST_INTERVAL_MIN * 60)
+            continue
+
+        markets = get_fresh_markets()
+        for m in markets:
+            if m["top_prob"] < 60:
+                continue
+            key = f"{m['slug']}-{m['last_trade']}"
+            if key in posted:
+                continue
+            tier = "JUST IN" if m["top_prob"] >= 90 else "BREAKING"
+            post = format_post(m, tier)
+            if send_telegram(post):
+                posted.add(key)
+                count += 1
+                print(f"✅ Posted: {m['question'][:50]}")
+            break  # one post per cycle
+
+        time.sleep(POST_INTERVAL_MIN * 60)
+
+# ==================== START ====================
 if __name__ == "__main__":
     run_monitor()
