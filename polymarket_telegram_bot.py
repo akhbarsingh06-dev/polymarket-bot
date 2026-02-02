@@ -108,9 +108,14 @@ def send_telegram(text):
 # ==================== HEALTH ====================
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"OK")
+        if self.path == '/health' or self.path == '/':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b"OK")
+        else:
+            self.send_response(404)
+            self.end_headers()
     def log_message(self, *_):
         pass
 
@@ -118,12 +123,35 @@ def start_health():
     port = int(os.environ.get("PORT", 8080))
     server = HTTPServer(("0.0.0.0", port), HealthHandler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    print(f"✅ Health server on {port}")
+    print(f"✅ Health check on port {port}")
+
+# Also expose a simple status endpoint
+class StatusHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/status':
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            import json
+            self.wfile.write(json.dumps({"status": "running", "service": "polymarket-bot"}).encode())
+        else:
+            self.send_response(404)
+            self.end_headers()
+    def log_message(self, *_):
+        pass
+
+def start_all_servers():
+    # Start health check server on Railway PORT
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), HealthHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    print(f"✅ Health server running on port {port}")
+    return server
 
 # ==================== MAIN ====================
 def run_monitor():
     print("🚀 POLYMARKET BOT STARTED")
-    start_health()
+    start_all_servers()
     posted = set()
     today = datetime.now().date()
     count = 0
