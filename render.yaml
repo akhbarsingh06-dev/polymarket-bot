@@ -1,0 +1,6 @@
+{
+  "service": "polymarket-telegram-bot",
+  "env": "python",
+  "buildCommand": "pip install requests",
+  "startCommand": "python3 polymarket_telegram_bot.py"
+}
