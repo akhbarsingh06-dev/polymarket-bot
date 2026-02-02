@@ -4,9 +4,9 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "startCommand": "./start.sh",
-    "healthcheckPath": "/",
-    "healthcheckTimeout": 60,
+    "startCommand": "python3 polymarket_telegram_bot.py",
+    "healthcheckPath": "/health",
+    "healthcheckTimeout": 600,
     "restartPolicy": "ON_FAILURE",
     "restartPolicyMaxRetries": 3
   }
