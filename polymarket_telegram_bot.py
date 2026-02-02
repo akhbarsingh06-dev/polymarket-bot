@@ -64,7 +64,8 @@ def get_fresh_markets():
     from collections import defaultdict
     markets = {}
     now = datetime.now()
-    cutoff = now.replace(hour=now.hour - 24)
+    from datetime import timedelta
+    cutoff = now - timedelta(hours=24)
 
     for t in trades:
         title = t.get("title", "Unknown")
